@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Itemize Costco receipts into YNAB</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e2230; --line:#2a2f3e;
+    --text:#e7e9ee; --muted:#9aa3b2; --accent:#3b82f6; --accent2:#2563eb;
+    --good:#22c55e; --warn:#f59e0b; --bad:#ef4444; --flag:#3a2a12;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:28px 20px 90px}
+  h1{font-size:20px;margin:0 0 2px;font-weight:650}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 14px;font-weight:600}
+  label{display:block;font-size:12px;color:var(--muted);margin:0 0 5px}
+  input,select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:9px 10px;font-size:14px;outline:none}
+  input:focus,select:focus{border-color:var(--accent)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  .field{margin-bottom:12px}
+  .chk{display:flex;align-items:center;gap:7px;margin-top:6px;font-size:12px;color:var(--muted)}
+  .chk input{width:auto}
+  button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer}
+  button:hover{background:var(--accent2)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+  button.ghost:hover{background:var(--panel2)}
+  .bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px}
+  .hidden{display:none}
+  .note{font-size:12px;color:var(--muted);margin-top:8px}
+  .err{color:var(--bad);font-size:13px;margin-top:10px;white-space:pre-wrap}
+  .ok{color:var(--good)}
+  .warnbar{background:#3a2a12;border:1px solid var(--warn);color:#f3d3a0;border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:16px;line-height:1.6}
+  .warnbar code{background:#0b0d12;padding:1px 5px;border-radius:4px}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:8px;border-bottom:1px solid var(--line)}
+  td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+  td.num,th.right{text-align:right;font-variant-numeric:tabular-nums}
+  tr.flagged{background:var(--flag)}
+  tr.fee td{color:var(--muted)}
+  td select,td input{padding:6px 7px;font-size:13px}
+  td input.memo{min-width:200px}
+  td input.net{width:80px;text-align:right}
+  button.lk{background:transparent;border:1px solid var(--line);color:var(--muted);padding:0 6px;font-size:12px;border-radius:6px;cursor:pointer;vertical-align:middle}
+  button.lk:hover{border-color:var(--accent);color:var(--text)}
+  .totals{display:flex;justify-content:flex-end;gap:28px;margin-top:14px;font-variant-numeric:tabular-nums}
+  .totals .k{color:var(--muted)}.totals .v.bad{color:var(--bad)}.totals .v.good{color:var(--good)}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:7px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .filebox{border:1px dashed var(--line);border-radius:10px;padding:22px;text-align:center;color:var(--muted)}
+  .filebox img{max-height:170px;border-radius:8px;margin-top:12px}
+  .lowtag{font-size:10px;color:var(--warn);margin-left:6px}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/heic-to@1.4.2/dist/iife/heic-to.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <h1>Itemize your Costco receipts into YNAB</h1>
+  <p class="sub" style="margin-bottom:10px">A single Costco run is one of the worst things to enter in YNAB: one big transaction you have to split across a dozen categories, with sales tax that applies to some items and not others. By hand it's a slog.</p>
+  <p class="sub" style="margin-bottom:10px">Take a photo of the receipt and this builds the whole entry for you — one YNAB transaction, split line by line, every item categorized, sales tax distributed exactly as the receipt charged it, the real product name in each memo, and the total reconciled to the penny. Review it, fix anything, post.</p>
+  <p class="sub">Runs entirely in your browser. You bring your own Anthropic and YNAB keys — they're sent only to those two services, never to a server.</p>
+
+  <div id="fileWarn" class="warnbar hidden">⚠️ This page is open as a local file, and YNAB rejects posts from a <code>file://</code> page. Open it from a web address instead: use the hosted version, or serve your own copy — in a terminal, <code>cd</code> into this file's folder, run <code>python3 -m http.server</code>, then open the <code>http://localhost:8000/</code> address it prints.</div>
+
+  <!-- 1. CONNECT -->
+  <div class="card" id="setupCard">
+    <h2>1 · Connect</h2>
+    <div class="row">
+      <div class="field">
+        <label>YNAB Personal Access Token <span class="pill">app.ynab.com → Account Settings → Developer Settings</span></label>
+        <input id="ynabToken" type="password" autocomplete="off" placeholder="ynab token">
+        <div class="chk"><input type="checkbox" id="remYnab"><label for="remYnab" style="margin:0">Remember on this device (full financial access — leave off if shared)</label></div>
+      </div>
+      <div class="field">
+        <label>Anthropic API Key <span class="pill">console.anthropic.com → API Keys</span></label>
+        <input id="anthKey" type="password" autocomplete="off" placeholder="sk-ant-...">
+        <div class="chk"><input type="checkbox" id="remAnth" checked><label for="remAnth" style="margin:0">Remember on this device</label></div>
+      </div>
+    </div>
+    <div class="field">
+      <label>Model</label>
+      <select id="model">
+        <option value="claude-haiku-4-5-20251001">Haiku — cheapest, fast</option>
+        <option value="claude-sonnet-4-6" selected>Sonnet — recommended balance</option>
+        <option value="claude-opus-4-8">Opus — most accurate</option>
+      </select>
+    </div>
+    <div class="bar">
+      <button class="ghost" onclick="forgetKeys()">Forget saved keys</button>
+      <button id="connectBtn" onclick="connect()">Connect</button>
+    </div>
+    <div id="setupErr" class="err"></div>
+  </div>
+
+  <!-- 2. DESTINATION -->
+  <div class="card hidden" id="targetCard">
+    <h2>2 · Destination</h2>
+    <div class="row">
+      <div class="field"><label>Budget</label><select id="budgetSel" onchange="onBudget()"></select></div>
+      <div class="field"><label>Account</label><select id="accountSel"></select></div>
+    </div>
+    <div id="catCount" class="note"></div>
+  </div>
+
+  <!-- 3. RECEIPT -->
+  <div class="card hidden" id="receiptCard">
+    <h2>3 · Receipt</h2>
+    <div class="filebox" id="fileBox">
+      <div>Drop a receipt photo here, or
+        <label style="color:var(--accent);cursor:pointer">browse<input id="fileInput" type="file" accept="image/*" capture="environment" class="hidden" onchange="onFile(event)"></label>
+      </div>
+      <div id="fileName" class="note"></div>
+      <img id="preview" class="hidden">
+    </div>
+    <div class="bar">
+      <span class="note">The receipt is read without web search. Once it loads, tap 🔍 on any line to look up that item's full product name.</span>
+      <button id="parseBtn" onclick="parseReceipt()" disabled>Parse receipt</button>
+    </div>
+    <div id="parseErr" class="err"></div>
+  </div>
+
+  <!-- 4. REVIEW -->
+  <div class="card hidden" id="reviewCard">
+    <h2>4 · Review &amp; post</h2>
+    <div class="row3" style="margin-bottom:14px">
+      <div class="field"><label>Date</label><input id="txnDate" type="date"></div>
+      <div class="field"><label>Payee</label><input id="payee" value="Costco"></div>
+      <div class="field"><label>Store</label><input id="store" disabled></div>
+    </div>
+    <div class="chk" style="margin:0 0 12px"><input type="checkbox" id="autosort" checked onchange="applySort();renderTable()"><label for="autosort" style="margin:0">Auto-sort line items by category (uncheck to keep cashier scan order)</label></div>
+    <div style="overflow-x:auto">
+      <table id="tbl"><thead><tr>
+        <th>Item #</th><th>Product</th><th class="right">Qty</th>
+        <th class="right">Pre-tax</th><th class="right">Tax</th><th class="right">Total</th>
+        <th>Category</th><th>Memo</th>
+      </tr></thead><tbody id="tbody"></tbody></table>
+    </div>
+    <div class="totals">
+      <div><span class="k">Split total:</span> <span id="splitTotal" class="v">—</span></div>
+      <div><span class="k">Receipt total:</span> <span id="receiptTotal" class="v">—</span></div>
+    </div>
+    <div id="reconcileMsg" class="note"></div>
+    <div class="bar">
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="ghost" onclick="resetReceipt()">Start over</button>
+        <button class="ghost" id="lookupAllBtn" onclick="lookupAll()" title="Resolve every line's full product name via web search — roughly 1–2¢ per item">🔍 Look up all names</button>
+      </div>
+      <button id="submitBtn" onclick="submitTxn()">Post split to YNAB</button>
+    </div>
+    <div id="submitMsg" class="err"></div>
+  </div>
+  <p class="sub" style="margin:30px 0 0;text-align:center;font-size:12px">Open source · no accounts, no server · your keys stay on your device.</p>
+</div>
+
+<script>
+"use strict";
+const YNAB="https://api.ynab.com/v1";
+const LS={ynab:"cy_ynab",anth:"cy_anth",model:"cy_model"};
+const S={ynabToken:"",anthKey:"",model:"claude-sonnet-4-6",budgetId:"",categories:[],parsed:null,lines:[]};
+const money=m=>(m/1000).toLocaleString("en-US",{style:"currency",currency:"USD"});
+const toMilli=d=>Math.round(Number(d)*1000);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// ---- key persistence (local file only) ----
+function loadSaved(){
+  try{
+    const y=localStorage.getItem(LS.ynab), a=localStorage.getItem(LS.anth), m=localStorage.getItem(LS.model);
+    if(y){ document.getElementById("ynabToken").value=y; document.getElementById("remYnab").checked=true; }
+    if(a){ document.getElementById("anthKey").value=a; document.getElementById("remAnth").checked=true; }
+    if(m){ document.getElementById("model").value=m; }
+  }catch(e){}
+}
+function forgetKeys(){
+  try{ localStorage.removeItem(LS.ynab); localStorage.removeItem(LS.anth); localStorage.removeItem(LS.model); }catch(e){}
+  document.getElementById("ynabToken").value=""; document.getElementById("anthKey").value="";
+  document.getElementById("remYnab").checked=false; document.getElementById("remAnth").checked=true;
+  document.getElementById("setupErr").textContent="Saved keys cleared.";
+}
+
+// ---- YNAB ----
+async function ynab(path,opts={}){
+  const r=await fetch(YNAB+path,{...opts,headers:{"Authorization":"Bearer "+S.ynabToken,"Content-Type":"application/json",...(opts.headers||{})}});
+  const raw=await r.text();
+  let body={}; try{ body=JSON.parse(raw); }catch(e){}
+  if(!r.ok) throw new Error("YNAB "+r.status+": "+(body?.error?.detail||body?.error?.name||raw||r.statusText));
+  return body.data;
+}
+async function connect(){
+  const e=document.getElementById("setupErr"); e.textContent="";
+  S.ynabToken=document.getElementById("ynabToken").value.trim();
+  S.anthKey=document.getElementById("anthKey").value.trim();
+  S.model=document.getElementById("model").value;
+  if(!S.ynabToken||!S.anthKey){ e.textContent="Both keys are required."; return; }
+  try{
+    if(document.getElementById("remYnab").checked) localStorage.setItem(LS.ynab,S.ynabToken); else localStorage.removeItem(LS.ynab);
+    if(document.getElementById("remAnth").checked) localStorage.setItem(LS.anth,S.anthKey); else localStorage.removeItem(LS.anth);
+    localStorage.setItem(LS.model,S.model);
+  }catch(err){}
+  const btn=document.getElementById("connectBtn"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Connecting…';
+  try{
+    const {budgets}=await ynab("/budgets");
+    document.getElementById("budgetSel").innerHTML=budgets.map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join("");
+    document.getElementById("targetCard").classList.remove("hidden");
+    document.getElementById("receiptCard").classList.remove("hidden");
+    await onBudget();
+  }catch(err){ e.textContent=err.message; }
+  finally{ btn.disabled=false; btn.textContent="Connect"; }
+}
+async function onBudget(){
+  S.budgetId=document.getElementById("budgetSel").value;
+  const {accounts}=await ynab(`/budgets/${S.budgetId}/accounts`);
+  document.getElementById("accountSel").innerHTML=accounts.filter(a=>!a.closed&&!a.deleted)
+    .map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join("");
+  const {category_groups}=await ynab(`/budgets/${S.budgetId}/categories`);
+  const skip=new Set(["Internal Master Category","Credit Card Payments"]);
+  S.categories=[];
+  for(const g of category_groups){
+    if(g.deleted||g.hidden||skip.has(g.name)) continue;
+    for(const c of g.categories){ if(c.deleted||c.hidden) continue; S.categories.push({id:c.id,name:c.name,group:g.name}); }
+  }
+  document.getElementById("catCount").textContent=`${S.categories.length} categories loaded.`;
+}
+
+// ---- file ----
+let selectedFile=null, fileB64="", fileMedia="";
+function onFile(ev){
+  const f=ev.target.files[0]; if(!f) return;
+  selectedFile=f;
+  document.getElementById("fileName").textContent=f.name;
+  try{ const img=document.getElementById("preview"); img.src=URL.createObjectURL(f); img.classList.remove("hidden"); }catch(e){}
+  document.getElementById("parseBtn").disabled=false;
+}
+function blobToB64(blob){ return new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result.split(",")[1]);fr.onerror=rej;fr.readAsDataURL(blob);}); }
+async function loadBitmap(blob){
+  try{ return await createImageBitmap(blob,{imageOrientation:"from-image"}); }
+  catch(e){
+    return await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(new Error("decode failed")); im.src=URL.createObjectURL(blob); });
+  }
+}
+async function processImage(file){
+  let src;
+  try{
+    src=await loadBitmap(file);                 // native: jpeg/png/webp/gif everywhere, + HEIC on iOS
+  }catch(e1){
+    if(typeof HeicTo==="undefined") throw new Error("Couldn't decode this image. If it's an iPhone HEIC, set Settings → Camera → Formats → Most Compatible, or upload a JPEG/PNG.");
+    try{
+      const jpeg=await HeicTo({blob:file,type:"image/jpeg",quality:0.9});
+      src=await loadBitmap(jpeg);
+    }catch(e2){
+      throw new Error("Couldn't read this image ("+(e2.message||e2)+"). Set iPhone capture to Most Compatible (JPEG), or upload a JPEG/PNG.");
+    }
+  }
+  const sw=src.width||src.naturalWidth, sh=src.height||src.naturalHeight;
+  const maxEdge=2200, scale=Math.min(1,maxEdge/Math.max(sw,sh));
+  const w=Math.round(sw*scale), h=Math.round(sh*scale);
+  const c=document.createElement("canvas"); c.width=w; c.height=h;
+  c.getContext("2d").drawImage(src,0,0,w,h);
+  const jpeg=await new Promise(r=>c.toBlob(r,"image/jpeg",0.9));
+  return {b64:await blobToB64(jpeg),media:"image/jpeg"};
+}
+const fb=document.getElementById("fileBox");
+["dragover","dragenter"].forEach(t=>fb.addEventListener(t,e=>{e.preventDefault();fb.style.borderColor="var(--accent)";}));
+["dragleave","drop"].forEach(t=>fb.addEventListener(t,e=>{e.preventDefault();fb.style.borderColor="var(--line)";}));
+fb.addEventListener("drop",e=>{ if(e.dataTransfer.files[0]) onFile({target:{files:e.dataTransfer.files}}); });
+
+// ---- vision + web search ----
+function buildPrompt(doLookup){
+  const cats=S.categories.map(c=>`${c.group} › ${c.name}`).join("\n");
+  const phase2 = doLookup ? `PHASE 2 — RESOLVE & CATEGORIZE:
+- For ANY item whose identity isn't obvious from the abbreviation, USE THE web_search TOOL. Primary query: the item number plus the word costco — "<item_number> costco" (e.g. "1696849 costco"). This reliably surfaces the exact product on costco.com and price-tracker sites. If that's inconclusive, try "<item_number> warehouse runner". Confirm the item number appears in the result before trusting it.
+- Build "product" as "<Full Product Name> (#<item_number>)".
+- FALLBACK if no conclusive result: "<abbrev> (#<item_number>)" (e.g. "NTG BEACH (#1696849)"), confidence "low".
+- Obvious items (BANANAS, KS COFFEE) need no search — format as "<abbrev> (#<item_number>)".`
+  : `PHASE 2 — CATEGORIZE (no web search, no tools):
+- Do NOT use any tools. Set "product" to "<abbrev> (#<item_number>)" for every item.
+- Still categorize each item from the abbreviation, the food/general tax flag, and your own knowledge of what the product is (e.g. "NTG BEACH" is Neutrogena sunscreen → a skincare category).`;
+  return `You are reading a Costco warehouse receipt image and producing a YNAB split. Work in two phases, then output STRICT JSON only — no markdown, no backticks, no prose around it.
+
+PHASE 1 — EXTRACT from the image, per line:
+- item_number, abbrev (the raw abbreviated text exactly as printed), qty, unit_price, line total.
+- Costco marks each line's tax treatment with a trailing code: lines taxed at the reduced GROCERY FOOD rate are "food"; lines at the full rate are "general". Use the printed code as the primary signal.
+- INSTANT SAVINGS / discount lines look like "<coupon#> /<item_number>  X.XX-". They reduce the item they reference. DO NOT emit them as their own items — subtract the discount and report the result as net_price.
+- The receipt prints a tax summary in lettered groups, e.g. "(A) A 8.63" and "(C) C 5.63". Report each as { letter, amount, kind } where kind "food" is the smaller/reduced rate and "general" is the full rate.
+- Membership fees or non-product service lines: tax_kind "none", is_fee true.
+
+${phase2}
+- Pick the single best category from THIS user's real YNAB list below, using the exact "Group › Name" string. confidence "high" only if sure; otherwise "low".
+
+USER'S YNAB CATEGORIES (use the exact "Group › Name" string):
+${cats}
+
+FINAL OUTPUT — emit ONLY this JSON object as your last message:
+{
+ "store": string, "date": "YYYY-MM-DD",
+ "subtotal": number, "total_tax": number, "total": number, "instant_savings": number,
+ "tax_groups": [ { "letter": string, "amount": number, "kind": "food"|"general" } ],
+ "items": [
+   { "item_number": string, "abbrev": string, "product": string,
+     "qty": number, "unit_price": number, "net_price": number,
+     "tax_kind": "food"|"general"|"none", "is_fee": boolean,
+     "category": "Group › Name", "confidence": "high"|"low" }
+ ]
+}
+net_price = per-line total AFTER instant savings, BEFORE tax. Numbers plain (e.g. 16.79), not strings.`;
+}
+
+async function callVision(){
+  const reqBody={
+    model:S.model,max_tokens:8000,
+    messages:[{role:"user",content:[
+      {type:"image",source:{type:"base64",media_type:fileMedia,data:fileB64}},
+      {type:"text",text:buildPrompt(false)}
+    ]}]
+  };
+  const r=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"x-api-key":S.anthKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true","content-type":"application/json"},
+    body:JSON.stringify(reqBody)
+  });
+  const data=await r.json();
+  if(!r.ok) throw new Error("Anthropic: "+(data?.error?.message||r.status));
+  const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
+  const s=txt.indexOf("{"),e=txt.lastIndexOf("}");
+  if(s<0||e<0) throw new Error("No JSON in model output:\n"+txt.slice(0,400));
+  try{ return JSON.parse(txt.slice(s,e+1)); }
+  catch(err){ throw new Error("Couldn't parse model output:\n"+txt.slice(s,s+400)); }
+}
+
+// ---- per-line on-demand name lookup (one web search) ----
+async function lookupName(itemNumber,abbrev){
+  const reqBody={ model:"claude-sonnet-4-6", max_tokens:1024,
+    tools:[{type:"web_search_20250305",name:"web_search",max_uses:4}],
+    messages:[{role:"user",content:`Find the full product name for Costco item number ${itemNumber} (receipt abbreviation "${abbrev}"). Use web_search with the query "${itemNumber} costco"; if inconclusive try "${itemNumber} warehouse runner". Reply with ONLY the product name followed by " (#${itemNumber})" and nothing else. If you cannot confidently find it, reply exactly: ${abbrev} (#${itemNumber})`}]
+  };
+  const r=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"x-api-key":S.anthKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true","content-type":"application/json"},
+    body:JSON.stringify(reqBody)
+  });
+  const data=await r.json();
+  if(!r.ok) throw new Error(data?.error?.message||r.status);
+  let txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join(" ").trim();
+  txt=txt.replace(/^["'\s]+|["'\s]+$/g,"");
+  return txt || `${abbrev} (#${itemNumber})`;
+}
+async function lookupLine(idx,btn){
+  const x=S.lines[idx]; if(!x.item_number) return;
+  const old=btn.textContent; btn.textContent="…"; btn.disabled=true;
+  try{
+    const name=await lookupName(x.item_number, x.abbrev||x.product);
+    x.product=name; x.memo=name; x.confidence="high"; x.looked=true;
+    renderTable();
+  }catch(e){ btn.textContent=old; btn.disabled=false; document.getElementById("submitMsg").textContent="Lookup failed: "+(e.message||e); }
+}
+async function lookupAll(){
+  const btn=document.getElementById("lookupAllBtn");
+  const todo=S.lines.filter(x=>!x.looked && x.item_number);
+  if(!todo.length){ const t=btn.textContent; btn.textContent="🔍 All names looked up"; setTimeout(()=>btn.textContent=t,1600); return; }
+  btn.disabled=true; document.getElementById("submitMsg").textContent="";
+  let done=0;
+  for(const x of todo){
+    btn.textContent=`Looking up ${++done} / ${todo.length}…`;
+    try{
+      const name=await lookupName(x.item_number, x.abbrev||x.product);
+      x.product=name; x.memo=name; x.confidence="high";
+    }catch(e){ /* leave this line as-is and continue */ }
+    x.looked=true; renderTable();
+  }
+  btn.disabled=false; btn.textContent="🔍 Look up all names";
+}
+
+async function parseReceipt(){
+  const e=document.getElementById("parseErr"); e.textContent="";
+  const btn=document.getElementById("parseBtn"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Reading receipt…';
+  try{
+    if(!selectedFile) throw new Error("Pick a receipt photo first.");
+    const img=await processImage(selectedFile); fileB64=img.b64; fileMedia=img.media;
+    const p=await callVision(); S.parsed=p; buildLines(p); renderReview(p);
+    document.getElementById("reviewCard").classList.remove("hidden");
+    document.getElementById("reviewCard").scrollIntoView({behavior:"smooth"});
+  }catch(err){ e.textContent=err.message; }
+  finally{ btn.disabled=false; btn.textContent="Parse receipt"; }
+}
+
+// ---- tax: distribute the receipt's printed buckets across lines ----
+function buildLines(p){
+  S.lines=p.items.map((it,i)=>{
+    const product=it.product || `${it.abbrev||it.item_number} (#${it.item_number})`;
+    return { i, item_number:it.item_number||"", abbrev:it.abbrev||"", product, qty:it.qty||1,
+      netMilli:toMilli(it.net_price ?? it.unit_price ?? 0),
+      tax_kind:it.tax_kind||"none", is_fee:!!it.is_fee, taxMilli:0,
+      catId:matchCategory(it.category), confidence:it.confidence||"high", looked:false, memo:product };
+  });
+  const buckets={food:0,general:0};
+  (p.tax_groups||[]).forEach(g=>{ if(g.kind==="food")buckets.food+=toMilli(g.amount); if(g.kind==="general")buckets.general+=toMilli(g.amount); });
+  if(buckets.food===0&&buckets.general===0&&p.total_tax) buckets.general=toMilli(p.total_tax);
+  S.bucketsMilli=buckets;
+  allocateTax();
+}
+function allocateTax(){
+  S.lines.forEach(x=>x.taxMilli=0);
+  const buckets=S.bucketsMilli||{food:0,general:0};
+  for(const kind of ["food","general"]){
+    const grp=S.lines.filter(x=>x.tax_kind===kind); const bucket=buckets[kind]||0;
+    const netSum=grp.reduce((s,x)=>s+Math.max(0,x.netMilli),0);
+    if(!grp.length||bucket===0||netSum===0) continue;
+    let alloc=0; grp.forEach(x=>{ x.taxMilli=Math.floor(bucket*Math.max(0,x.netMilli)/netSum); alloc+=x.taxMilli; });
+    let rem=bucket-alloc; const sorted=[...grp].sort((a,b)=>b.netMilli-a.netMilli); let k=0;
+    while(rem>0&&sorted.length){ sorted[k%sorted.length].taxMilli+=1; rem--; k++; }
+  }
+}
+function matchCategory(name){
+  if(!name) return "";
+  let h=S.categories.find(c=>`${c.group} › ${c.name}`===name);
+  if(!h) h=S.categories.find(c=>c.name.toLowerCase()===String(name).split("›").pop().trim().toLowerCase());
+  if(!h) h=S.categories.find(c=>String(name).toLowerCase().includes(c.name.toLowerCase()));
+  return h?h.id:"";
+}
+
+// ---- review ----
+function catOptions(selId){
+  const groups={}; S.categories.forEach(c=>{(groups[c.group]=groups[c.group]||[]).push(c);});
+  let html=`<option value="">— choose —</option>`;
+  for(const g in groups){ html+=`<optgroup label="${esc(g)}">`; groups[g].forEach(c=>{html+=`<option value="${c.id}" ${c.id===selId?"selected":""}>${esc(c.name)}</option>`;}); html+=`</optgroup>`; }
+  return html;
+}
+function sortLinesByCategory(){
+  const key=l=>{ if(!l.catId) return "\u0000"; const c=S.categories.find(x=>x.id===l.catId); return c?"1"+c.group+"\u0001"+c.name:"\u0000"; };
+  S.lines.sort((a,b)=>{ const ka=key(a),kb=key(b); if(ka<kb)return -1; if(ka>kb)return 1; return a.i-b.i; });
+}
+function applySort(){
+  const a=document.getElementById("autosort");
+  if(!a||a.checked) sortLinesByCategory();
+  else S.lines.sort((x,y)=>x.i-y.i);   // cashier scan order
+}
+function renderReview(p){
+  document.getElementById("store").value=p.store||"Costco";
+  document.getElementById("txnDate").value=isoDate(p.date)||new Date().toISOString().slice(0,10);
+  applySort();
+  renderTable();
+}
+function renderTable(){
+  const tb=document.getElementById("tbody"); tb.innerHTML="";
+  S.lines.forEach((x,idx)=>{
+    const tr=document.createElement("tr");
+    if(x.confidence==="low"||!x.catId) tr.className="flagged";
+    if(x.is_fee) tr.className+=" fee";
+    tr.innerHTML=`
+      <td>${esc(x.item_number)}</td>
+      <td>${esc(x.product)} <button class="lk" title="Look up full name" onclick="lookupLine(${idx},this)">🔍</button>${(x.confidence==="low"||!x.catId)?'<span class="lowtag">check</span>':''}</td>
+      <td class="num">${x.qty}</td>
+      <td class="num"><input class="net" type="number" step="0.01" value="${(x.netMilli/1000).toFixed(2)}" onchange="setNet(${idx},this.value)"></td>
+      <td class="num">${money(x.taxMilli)}</td>
+      <td class="num">${money(x.netMilli+x.taxMilli)}</td>
+      <td><select onchange="setCat(${idx},this.value)">${catOptions(x.catId)}</select></td>
+      <td><input class="memo" value="${esc(x.memo)}" onchange="setMemo(${idx},this.value)"></td>`;
+    tb.appendChild(tr);
+  });
+  reconcile();
+}
+function setCat(i,v){ S.lines[i].catId=v; applySort(); renderTable(); }
+function setMemo(i,v){ S.lines[i].memo=v; }
+function setNet(i,v){ S.lines[i].netMilli=toMilli(v||0); allocateTax(); renderTable(); }
+function splitSumMilli(){ return S.lines.reduce((s,x)=>s+x.netMilli+x.taxMilli,0); }
+function reconcile(){
+  const split=splitSumMilli(), total=toMilli(S.parsed.total||0), diff=split-total;
+  document.getElementById("splitTotal").textContent=money(split);
+  document.getElementById("receiptTotal").textContent=money(total);
+  const sv=document.getElementById("splitTotal"), msg=document.getElementById("reconcileMsg"), sub=document.getElementById("submitBtn");
+  const allCats=S.lines.every(x=>x.catId);
+  if(Math.abs(diff)<=50){
+    sv.className="v good";
+    msg.innerHTML=(diff!==0?`Off by ${money(diff)} (rounding) — applied to the largest line on submit. `:"")+
+      (allCats?'<span class="ok">Every line categorized. Ready to post.</span>':'<span style="color:var(--warn)">Some lines still need a category (highlighted).</span>');
+    sub.disabled=!allCats;
+  }else{
+    sv.className="v bad";
+    msg.innerHTML=`<span style="color:var(--bad)">Split is off the receipt total by ${money(diff)} — a line was likely misread. Check the Pre-tax amounts.</span>`;
+    sub.disabled=true;
+  }
+}
+
+// ---- submit ----
+function isoDate(s){
+  if(!s) return "";
+  s=String(s).trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if(m){ let[,mo,d,y]=m; if(y.length===2)y="20"+y; return `${y}-${String(mo).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+  const dt=new Date(s); if(!isNaN(dt)) return dt.toISOString().slice(0,10);
+  return "";
+}
+async function submitTxn(){
+  const m=document.getElementById("submitMsg"); m.textContent=""; m.className="err";
+  const btn=document.getElementById("submitBtn"); btn.disabled=true; btn.innerHTML='<span class="spin"></span>Posting…';
+  const date=isoDate(document.getElementById("txnDate").value)||new Date().toISOString().slice(0,10);
+  const account_id=document.getElementById("accountSel").value;
+  try{
+    if(!account_id) throw new Error("No account selected (step 2).");
+    const target=-toMilli(S.parsed.total);
+    let subs=S.lines.map(x=>({ amount:-(x.netMilli+x.taxMilli), category_id:x.catId, memo:(x.memo||"").slice(0,200) }))
+                    .filter(t=>t.amount!==0 && t.category_id);
+    if(!subs.length) throw new Error("No usable line items to post.");
+    let sum=subs.reduce((s,t)=>s+t.amount,0), rem=target-sum;
+    if(rem!==0){ let bi=0; subs.forEach((t,i)=>{ if(Math.abs(t.amount)>Math.abs(subs[bi].amount)) bi=i; }); subs[bi].amount+=rem; }
+    const payload={transaction:{
+      account_id, date, amount:target,
+      payee_name:(document.getElementById("payee").value||"Costco").slice(0,50),
+      category_id:null, memo:((S.parsed.store||"Costco")+" receipt").slice(0,200),
+      cleared:"cleared", approved:true,
+      subtransactions:subs
+    }};
+    await ynab(`/budgets/${S.budgetId}/transactions`,{method:"POST",body:JSON.stringify(payload)});
+    m.className="err ok"; m.innerHTML=`Posted ${subs.length} splits totaling ${money(-target)} to YNAB. ✓`;
+    btn.textContent="Posted ✓";
+  }catch(err){
+    const sum=S.lines.reduce((s,x)=>s+x.netMilli+x.taxMilli,0);
+    m.textContent=err.message+`\n[diagnostics: date=${date||"(blank)"}, account=${account_id?"set":"MISSING"}, lines=${S.lines.length}, split=${money(sum)}, total=${money(toMilli(S.parsed.total||0))}]`;
+    btn.disabled=false; btn.textContent="Post split to YNAB";
+  }
+}
+function resetReceipt(){
+  S.parsed=null; S.lines=[]; fileB64="";
+  document.getElementById("reviewCard").classList.add("hidden");
+  document.getElementById("preview").classList.add("hidden");
+  document.getElementById("fileName").textContent="";
+  document.getElementById("parseBtn").disabled=true;
+  document.getElementById("submitMsg").textContent="";
+  document.getElementById("fileInput").value="";
+}
+loadSaved();
+if(location.protocol==="file:") document.getElementById("fileWarn").classList.remove("hidden");
+</script>
+</body>
+</html>
