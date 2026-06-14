@@ -20,7 +20,7 @@ You review everything, fix anything, then post.
 
 ## Use it
 
-**→ [Live version](https://github.com/tweder/costco-ynab-itemizer/)**
+**→ [Live version](https://tweder.github.io/costco-ynab-itemizer/)**
 
 You'll need two things:
 
